@@ -10,9 +10,9 @@ if __name__ == "__main__":
     # 1. Define Nodes (4 nodes forming 3 members)
     nodes_coords_dict = {
         0: [0.0, 0.0, 0.0],
-        1: [5.0, 0.0, 0.0],
-        2: [5.0, 5.0, 0.0],
-        3: [0.0, 5.0, 0.0]
+        1: [5.0, 0.0, 2.5],
+        2: [5.0, 5.0, 5.0],
+        3: [0.0, 5.0, 7.5]
     }
     
     # 2. Define Members (Connectivity)
@@ -22,18 +22,20 @@ if __name__ == "__main__":
         (2, 3)  # Member 2: from node 2 to node 3
     ]
     
-    # 3. Generate Point Cloud
+    # 3. Generate Point Cloud (cylindrical members)
     point_cloud, ground_truth_membership = generate_truss_point_cloud(
         nodes_coords_dict=nodes_coords_dict,
         member_connectivity=member_connectivity,
-        points_per_member=100,
-        noise_std=0.05,
+        points_per_member=50,      # 沿杆件长度的点数
+        radius=0.2,                # 圆管半径
+        points_per_circle=12,       # 每个圆周上的点数
+        noise_std=0.03,
         num_noise_points=50
     )
 
     # 4. Run the Segmentation Algorithm
     max_len = 6.0 # Estimated max length between nodes
-    tol_dist = 0.1 # Tolerance for assignment (slightly larger than noise std)
+    tol_dist = 0.4 # Tolerance for assignment (needs to be larger than cylinder radius)
 
     membership_result = rough_segmentation(
         point_cloud=point_cloud,

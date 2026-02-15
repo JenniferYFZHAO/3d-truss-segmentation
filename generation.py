@@ -1,13 +1,16 @@
 import numpy as np
 
-def generate_truss_point_cloud(nodes_coords_dict, member_connectivity, points_per_member=100, noise_std=0.05, num_noise_points=50):
+def generate_truss_point_cloud(nodes_coords_dict, member_connectivity, points_per_member=100, 
+                               radius=0.1, points_per_circle=20, noise_std=0.05, num_noise_points=50):
     """
-    Generates a simulated point cloud for a truss structure with noise.
+    Generates a simulated point cloud for a truss structure with cylindrical members.
     
     Args:
         nodes_coords_dict (dict): Dictionary of node coordinates {node_id: [x, y, z]}
         member_connectivity (list of tuples): List of member connections [(start_node_id, end_node_id), ...]
-        points_per_member (int): Number of points to generate per member
+        points_per_member (int): Number of center points to generate along each member's length
+        radius (float): Radius of the cylindrical members
+        points_per_circle (int): Number of points to generate around each circle at each center point
         noise_std (float): Standard deviation of noise to add to points
         num_noise_points (int): Number of additional noise points to generate
         
@@ -16,27 +19,61 @@ def generate_truss_point_cloud(nodes_coords_dict, member_connectivity, points_pe
             point_cloud: Generated point cloud array of shape (N, 3)
             ground_truth_membership: Ground truth membership array of shape (N,)
     """
-    # Simulate Point Cloud along these members (add some noise)
+    # Simulate Point Cloud with cylindrical members
     simulated_point_cloud_parts = []
     simulated_membership_gt = [] # Ground truth for verification
 
     for idx, (start_id, end_id) in enumerate(member_connectivity):
-        start_coord = nodes_coords_dict[start_id]
-        end_coord = nodes_coords_dict[end_id]
+        start_coord = np.array(nodes_coords_dict[start_id])
+        end_coord = np.array(nodes_coords_dict[end_id])
         
-        # Generate points along the line segment
+        # Calculate member direction vector
+        member_vector = end_coord - start_coord
+        member_length = np.linalg.norm(member_vector)
+        
+        # Create local coordinate system for the cylinder
+        # First, find two orthogonal vectors perpendicular to member_vector
+        if abs(member_vector[0]) > 0.1 or abs(member_vector[1]) > 0.1:
+            # Not aligned with z-axis
+            v1 = np.array([-member_vector[1], member_vector[0], 0])
+        else:
+            # Aligned with z-axis, use x-axis
+            v1 = np.array([1, 0, 0])
+        
+        v1 = v1 / np.linalg.norm(v1)  # Normalize
+        v2 = np.cross(member_vector, v1)
+        v2 = v2 / np.linalg.norm(v2)  # Normalize
+        
+        # Generate points along the cylinder
+        cylinder_points = []
+        
+        # Generate center points along the member length
         t_vals = np.linspace(0, 1, points_per_member)
-        line_points = np.array(start_coord)[:, None] + t_vals * (np.array(end_coord) - np.array(start_coord))[:, None]
-        line_points = line_points.T # Shape: (num_points, 3)
+        
+        for t in t_vals:
+            # Center point at this position along the member
+            center = start_coord + t * member_vector
+            
+            # Generate points in a circle around this center
+            angles = np.linspace(0, 2 * np.pi, points_per_circle, endpoint=False)
+            
+            for angle in angles:
+                # Calculate point on the circle
+                circle_point = center + radius * (np.cos(angle) * v1 + np.sin(angle) * v2)
+                cylinder_points.append(circle_point)
+        
+        cylinder_points = np.array(cylinder_points)
         
         # Add small random noise
-        noise = np.random.normal(scale=noise_std, size=line_points.shape) # Noise with specified std dev
-        noisy_line_points = line_points + noise
+        if noise_std > 0:
+            noise = np.random.normal(scale=noise_std, size=cylinder_points.shape)
+            cylinder_points = cylinder_points + noise
         
-        simulated_point_cloud_parts.append(noisy_line_points)
+        simulated_point_cloud_parts.append(cylinder_points)
         
         # Assign ground truth membership
-        simulated_membership_gt.extend([idx] * points_per_member)
+        total_points_for_member = len(cylinder_points)
+        simulated_membership_gt.extend([idx] * total_points_for_member)
         
     simulated_point_cloud = np.vstack(simulated_point_cloud_parts)
     ground_truth_membership = np.array(simulated_membership_gt)
