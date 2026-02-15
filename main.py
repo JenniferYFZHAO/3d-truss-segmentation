@@ -41,7 +41,7 @@ if __name__ == "__main__":
         member_connectivity=member_connectivity,
         max_member_length=max_len,
         tolerance_distance=tol_dist
-    )
+    ) 
 
     # 5. Compare Results with Ground Truth
     print("\n--- Verification ---")
