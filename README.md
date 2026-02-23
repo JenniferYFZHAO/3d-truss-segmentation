@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- **点云生成**：自动生成模拟的桁架结构点云数据
+- **点云生成**：自动生成模拟的桁架结构点云数据，支持圆管杆件和球节点
 - **点云分割**：基于节点坐标和构件连接关系的点云粗分割算法
 - **可视化**：支持分割前后点云的 3D 可视化
 - **表面重建**：使用 Poisson 重建从点云生成表面模型
@@ -84,24 +84,28 @@ python main.py
 python surface_extract.py
 ```
 
-注意：运行此脚本需要有 `.pcd` 格式的点云文件（默认查找 `rabbit.pcd`）。
+此脚本会自动生成带球节点的桁架点云，然后进行表面重建并可视化。
 
 ## 模块说明
 
 ### generation.py
 
-包含点云生成功能：
+包含点云生成功能，支持圆管杆件和球节点：
 
 ```python
 from generation import generate_truss_point_cloud
 
-# 生成桁架点云
+# 生成桁架点云（圆管杆件 + 球节点）
 point_cloud, ground_truth = generate_truss_point_cloud(
     nodes_coords_dict=nodes_coords,
     member_connectivity=member_connectivity,
-    points_per_member=100,
+    points_per_member=100,      # 沿杆件长度的点数
+    radius=0.1,                   # 圆管半径
+    points_per_circle=20,          # 每个圆周上的点数
     noise_std=0.05,
-    num_noise_points=50
+    num_noise_points=50,
+    node_sphere_radius=0.2,        # 球节点半径
+    points_per_sphere=50            # 每个球面上的点数
 )
 ```
 

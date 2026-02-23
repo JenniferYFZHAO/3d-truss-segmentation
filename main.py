@@ -22,15 +22,17 @@ if __name__ == "__main__":
         (2, 3)  # Member 2: from node 2 to node 3
     ]
     
-    # 3. Generate Point Cloud (cylindrical members)
+    # 3. Generate Point Cloud (cylindrical members with spherical nodes)
     point_cloud, ground_truth_membership = generate_truss_point_cloud(
         nodes_coords_dict=nodes_coords_dict,
         member_connectivity=member_connectivity,
-        points_per_member=50,      # 沿杆件长度的点数
-        radius=0.2,                # 圆管半径
-        points_per_circle=12,       # 每个圆周上的点数
+        points_per_member=50,           # 沿杆件长度的点数
+        radius=0.2,                     # 圆管半径
+        points_per_circle=12,            # 每个圆周上的点数
         noise_std=0.03,
-        num_noise_points=50
+        num_noise_points=50,
+        node_sphere_radius=0.35,         # 球节点半径（比杆件半径稍大）
+        points_per_sphere=80             # 每个球面上的点数
     )
 
     # 4. Run the Segmentation Algorithm
