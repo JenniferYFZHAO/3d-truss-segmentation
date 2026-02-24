@@ -60,3 +60,4 @@ def visualize_point_cloud(point_cloud, membership=None, title="Point Cloud Visua
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
+

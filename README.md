@@ -19,7 +19,9 @@
 ├── visualization.py     # 点云可视化模块
 ├── surface_extract.py   # 表面重建模块
 ├── read_cloudpoints.py  # .las 文件读取和可视化模块
-├── main.py              # 主程序入口
+├── visualization.py     # 可视化模块
+├── segmentation.py      # 分割模块（含分割演示主程序）
+├── main.py              # 主程序入口（待添加）
 ├── setup_env.bat        # Windows 批处理环境配置脚本
 ├── setup_env.ps1        # PowerShell 环境配置脚本
 ├── requirements.txt     # Python 依赖包列表
@@ -87,6 +89,18 @@ python surface_extract.py
 ```
 
 此脚本会自动生成带球节点的桁架点云，然后进行表面重建并可视化。
+
+### 运行分割和可视化演示
+
+```bash
+python segmentation.py
+```
+
+此脚本会：
+1. 生成带球节点的桁架点云（圆管杆件 + 球节点）
+2. 运行分割算法
+3. 计算分割准确率
+4. 可视化分割前后的点云对比
 
 ### 读取和可视化 .las 文件
 
