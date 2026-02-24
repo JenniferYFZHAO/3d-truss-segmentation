@@ -5,6 +5,7 @@
 ## 功能特性
 
 - **点云生成**：自动生成模拟的桁架结构点云数据，支持圆管杆件和球节点
+- **点云读取**：支持读取 .las 格式的工程点云文件（支持大文件）
 - **点云分割**：基于节点坐标和构件连接关系的点云粗分割算法
 - **可视化**：支持分割前后点云的 3D 可视化
 - **表面重建**：使用 Poisson 重建从点云生成表面模型
@@ -13,15 +14,16 @@
 
 ```
 3d-truss-segmentation/
-├── generation.py      # 点云生成模块
-├── segmentation.py    # 点云分割模块
-├── visualization.py   # 点云可视化模块
-├── surface_extract.py # 表面重建模块
-├── main.py            # 主程序入口
-├── setup_env.bat      # Windows 批处理环境配置脚本
-├── setup_env.ps1      # PowerShell 环境配置脚本
-├── requirements.txt   # Python 依赖包列表
-└── README.md          # 项目说明文档
+├── generation.py        # 点云生成模块
+├── segmentation.py      # 点云分割模块
+├── visualization.py     # 点云可视化模块
+├── surface_extract.py   # 表面重建模块
+├── read_cloudpoints.py  # .las 文件读取和可视化模块
+├── main.py              # 主程序入口
+├── setup_env.bat        # Windows 批处理环境配置脚本
+├── setup_env.ps1        # PowerShell 环境配置脚本
+├── requirements.txt     # Python 依赖包列表
+└── README.md            # 项目说明文档
 ```
 
 ## 环境要求
@@ -86,6 +88,50 @@ python surface_extract.py
 
 此脚本会自动生成带球节点的桁架点云，然后进行表面重建并可视化。
 
+### 读取和可视化 .las 文件
+
+```bash
+python read_cloudpoints.py
+```
+
+程序会自动使用默认文件路径，或者您也可以指定其他文件：
+
+```bash
+python read_cloudpoints.py <your_file.las>
+```
+
+**交互式使用流程：**
+1. 程序会先显示文件基本信息（点数、坐标范围等）
+2. 根据文件大小推荐合适的下采样比例
+3. 您可以选择使用推荐值或输入自定义值
+4. 显示进度条读取点云
+5. 可视化显示点云
+
+**在代码中使用：**
+
+```python
+from read_cloudpoints import read_las_point_cloud, visualize_point_cloud, read_and_visualize_las, get_las_info
+
+# 获取文件信息（不读取全部数据）
+info = get_las_info("your_file.las")
+print(f"点数: {info['point_count']:,}")
+
+# 读取点云（大文件推荐下采样，带进度条）
+points = read_las_point_cloud("your_file.las", subsample_factor=50, show_progress=True)
+
+# 可视化点云（可选自动关闭）
+visualize_point_cloud(points, point_size=1.0, auto_close_time=None)
+
+# 一键读取并可视化
+points = read_and_visualize_las("your_file.las", subsample_factor=50)
+```
+
+**大文件处理建议：**
+- >5000万点: subsample_factor=100-200
+- 1000万-5000万点: subsample_factor=50-100
+- 100万-1000万点: subsample_factor=20-50
+- <100万点: subsample_factor=10
+
 ## 模块说明
 
 ### generation.py
@@ -144,6 +190,26 @@ visualize_point_cloud(point_cloud, membership, title="Post-segmentation Point Cl
 
 包含表面重建功能，使用 Open3D 进行 Poisson 重建。
 
+### read_cloudpoints.py
+
+包含 .las 点云文件读取和可视化功能：
+
+```python
+from read_cloudpoints import read_las_point_cloud, visualize_point_cloud, get_las_info, read_and_visualize_las
+
+# 获取文件信息（不读取全部数据）
+info = get_las_info("your_file.las")
+
+# 读取点云
+points = read_las_point_cloud("your_file.las", subsample_factor=10)
+
+# 可视化
+visualize_point_cloud(points)
+
+# 一键读取并可视化
+points = read_and_visualize_las("your_file.las", subsample_factor=10)
+```
+
 ## 算法原理
 
 ### 点云分割算法
@@ -175,6 +241,8 @@ visualize_point_cloud(point_cloud, membership, title="Post-segmentation Point Cl
 - matplotlib >= 3.0
 - scipy >= 1.0
 - open3d >= 0.17
+- laspy >= 2.0
+- tqdm >= 4.0
 
 详细版本信息请查看 `requirements.txt`。
 

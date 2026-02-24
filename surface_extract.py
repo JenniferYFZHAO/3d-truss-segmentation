@@ -16,6 +16,8 @@ if __name__ == '__main__':
         (0, 1),  # Member 0
         (1, 2),  # Member 1
         (2, 3),  # Member 2
+        (3, 0),  # Member 3
+        (2, 0),  # Member 3
     ]
     
     # 2. 使用 generation.py 生成带球节点的圆管点云
@@ -23,13 +25,13 @@ if __name__ == '__main__':
     point_cloud_np, _ = generate_truss_point_cloud(
         nodes_coords_dict=nodes_coords_dict,
         member_connectivity=member_connectivity,
-        points_per_member=50,           # 沿杆件长度的点数
+        points_per_member=150,           # 沿杆件长度的点数
         radius=0.3,                     # 圆管半径
         points_per_circle=15,            # 每个圆周上的点数
         noise_std=0.01,                 # 减小噪声
         num_noise_points=0,              # 不添加额外噪声点
         node_sphere_radius=0.45,         # 球节点半径
-        points_per_sphere=100            # 每个球面上的点数
+        points_per_sphere=400            # 每个球面上的点数
     )
     
     # 3. 将 numpy 数组转换为 Open3D 点云格式

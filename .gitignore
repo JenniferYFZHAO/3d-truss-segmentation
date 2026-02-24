@@ -41,3 +41,8 @@ Thumbs.db
 *.ply
 *.obj
 *.stl
+*.las
+*.laz
+
+# Test files
+test_*.py
