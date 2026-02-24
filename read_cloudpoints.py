@@ -82,7 +82,7 @@ def read_las_point_cloud(file_path, subsample_factor=1, show_progress=True):
     return points
 
 
-def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_close_time=None):
+def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_close_time=None, scale_factor=1.0):
     """
     使用 Open3D 可视化点云。
     
@@ -91,6 +91,7 @@ def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_
         title (str): 窗口标题
         point_size (float): 点的大小
         auto_close_time (float): 自动关闭时间（秒），None 表示不自动关闭
+        scale_factor (float): 缩放参数，0 表示自动计算，1.0 表示默认缩放
     """
     print(f"正在可视化点云 (点数: {len(points):,})...")
     print("提示: 按 'Q' 或 'ESC' 键关闭窗口")
@@ -110,6 +111,20 @@ def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_
     # 设置点大小
     vis.get_render_option().point_size = point_size
     vis.get_render_option().background_color = np.array([0.1, 0.1, 0.1])  # 深色背景
+    
+    # 设置缩放
+    if scale_factor > 0:
+        print(f"使用缩放参数: {scale_factor}")
+        # 获取当前视图控制
+        ctr = vis.get_view_control()
+        # 设置视图中心为点云中心
+        ctr.set_lookat(pcd.get_center())
+        # 设置相机方向
+        ctr.set_up([0, 1, 0])
+        ctr.set_front([1, 0, 0])
+        # 应用缩放（注意：set_zoom 的值越大，视图越近；所以需要反向）
+        # scale_factor 越大，视图应该越远，所以使用 1.0/scale_factor
+        ctr.set_zoom(1.0 / scale_factor)
     
     # 如果设置了自动关闭时间，启动定时器
     if auto_close_time is not None:
@@ -139,7 +154,7 @@ def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_
     print("可视化窗口已关闭")
 
 
-def read_and_visualize_las(file_path, subsample_factor=50, point_size=1.0, auto_close_time=None):
+def read_and_visualize_las(file_path, subsample_factor=50, point_size=1.0, auto_close_time=None, scale_factor=1.0):
     """
     读取并可视化 .las 点云文件（便捷函数）。
     
@@ -148,6 +163,7 @@ def read_and_visualize_las(file_path, subsample_factor=50, point_size=1.0, auto_
         subsample_factor (int): 下采样因子，对于大文件建议使用 10-100
         point_size (float): 点的大小
         auto_close_time (float): 自动关闭时间（秒），None 表示不自动关闭
+        scale_factor (float): 缩放参数，0 表示自动计算，1.0 表示默认缩放
     """
     # 读取点云
     points = read_las_point_cloud(file_path, subsample_factor=subsample_factor)
@@ -157,7 +173,8 @@ def read_and_visualize_las(file_path, subsample_factor=50, point_size=1.0, auto_
         points, 
         title=f"LAS Point Cloud: {file_path}", 
         point_size=point_size,
-        auto_close_time=auto_close_time
+        auto_close_time=auto_close_time,
+        scale_factor=scale_factor
     )
     
     return points
@@ -276,18 +293,49 @@ if __name__ == '__main__':
         print(f"输入无效，使用默认值: {recommended}")
         subsample_factor = recommended
     
+    # 3. 询问用户缩放参数
+    print("\n" + "="*60)
+    print("第三步：选择缩放参数")
+    print("="*60)
+    print("缩放参数控制可视化时的初始视角缩放:")
+    print("建议值:")
+    print("  - 紧密视图: 0.5-1.0")
+    print("  - 适中视图: 1.0-2.0")
+    print("  - 全局视图: 2.0-5.0")
+    print("  - 自动缩放: 0 (自动计算)")
+    
+    recommended_scale = 1.0
+    
+    print(f"\n推荐缩放参数: {recommended_scale}")
+    
+    # 获取用户输入
+    try:
+        user_input = input(f"请输入缩放参数 [默认: {recommended_scale}]: ").strip()
+        if user_input:
+            scale_factor = float(user_input)
+        else:
+            scale_factor = recommended_scale
+    except KeyboardInterrupt:
+        print("\n用户取消操作")
+        sys.exit(0)
+    except:
+        print(f"输入无效，使用默认值: {recommended_scale}")
+        scale_factor = recommended_scale
+    
     # 3. 读取和可视化
     print("\n" + "="*60)
-    print("第三步：读取和可视化点云")
+    print("第四步：读取和可视化点云")
     print("="*60)
     print(f"采样比例: {subsample_factor}")
+    print(f"缩放参数: {scale_factor}")
     
     try:
         # 读取并可视化
         points = read_and_visualize_las(
             las_file_path, 
             subsample_factor=subsample_factor,
-            point_size=1.0
+            point_size=1.0,
+            scale_factor=scale_factor
         )
         
         print("\n" + "="*60)
