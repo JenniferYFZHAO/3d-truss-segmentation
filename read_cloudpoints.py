@@ -82,9 +82,11 @@ def read_las_point_cloud(file_path, subsample_factor=1, show_progress=True):
     return points
 
 
-def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_close_time=None, scale_factor=1.0):
+def visualize_point_cloud(points=None, title="Point Cloud Visualization", point_size=1.0, 
+                         auto_close_time=None, scale_factor=1.0, pcd=None, mesh=None, 
+                         geometries=None, width=1400, height=900, background_color=[0.1, 0.1, 0.1]):
     """
-    使用 Open3D 可视化点云。
+    使用 Open3D 可视化点云和网格。
     
     Args:
         points (numpy.ndarray): 点云数据，形状为 (N, 3)
@@ -92,39 +94,69 @@ def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_
         point_size (float): 点的大小
         auto_close_time (float): 自动关闭时间（秒），None 表示不自动关闭
         scale_factor (float): 缩放参数，0 表示自动计算，1.0 表示默认缩放
+        pcd (o3d.geometry.PointCloud): Open3D 点云对象
+        mesh (o3d.geometry.TriangleMesh): Open3D 网格对象
+        geometries (list): Open3D 几何体列表，优先级最高
+        width (int): 窗口宽度
+        height (int): 窗口高度
+        background_color (list): 背景颜色 RGB
     """
-    print(f"正在可视化点云 (点数: {len(points):,})...")
-    print("提示: 按 'Q' 或 'ESC' 键关闭窗口")
-    
-    # 创建 Open3D 点云对象
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    
-    # 设置默认颜色（灰色）
-    pcd.paint_uniform_color([0.5, 0.5, 0.5])
-    
-    # 可视化
     vis = o3d.visualization.Visualizer()
-    vis.create_window(window_name=title, width=1400, height=900)
-    vis.add_geometry(pcd)
+    vis.create_window(window_name=title, width=width, height=height)
     
-    # 设置点大小
+    geometry_list = []
+    
+    # 优先使用 geometries 列表
+    if geometries is not None:
+        geometry_list = geometries
+    else:
+        # 添加网格
+        if mesh is not None:
+            geometry_list.append(mesh)
+        # 添加点云对象
+        if pcd is not None:
+            geometry_list.append(pcd)
+        # 从 numpy 数组创建点云
+        if points is not None:
+            temp_pcd = o3d.geometry.PointCloud()
+            temp_pcd.points = o3d.utility.Vector3dVector(points)
+            temp_pcd.paint_uniform_color([0.5, 0.5, 0.5])
+            geometry_list.append(temp_pcd)
+    
+    if not geometry_list:
+        print("警告: 没有可可视化的几何体")
+        vis.destroy_window()
+        return
+    
+    # 添加所有几何体到可视化器
+    for geom in geometry_list:
+        vis.add_geometry(geom)
+    
+    # 设置渲染选项
     vis.get_render_option().point_size = point_size
-    vis.get_render_option().background_color = np.array([0.1, 0.1, 0.1])  # 深色背景
+    vis.get_render_option().background_color = np.array(background_color)
+    
+    # 计算所有几何体的中心
+    all_points = []
+    for geom in geometry_list:
+        if hasattr(geom, 'get_center'):
+            all_points.append(geom.get_center())
+    
+    if all_points:
+        center = np.mean(all_points, axis=0)
+    else:
+        center = np.array([0, 0, 0])
     
     # 设置缩放
     if scale_factor > 0:
-        print(f"使用缩放参数: {scale_factor}")
-        # 获取当前视图控制
         ctr = vis.get_view_control()
-        # 设置视图中心为点云中心
-        ctr.set_lookat(pcd.get_center())
-        # 设置相机方向
+        ctr.set_lookat(center)
         ctr.set_up([0, 1, 0])
         ctr.set_front([1, 0, 0])
-        # 应用缩放（注意：set_zoom 的值越大，视图越近；所以需要反向）
-        # scale_factor 越大，视图应该越远，所以使用 1.0/scale_factor
         ctr.set_zoom(1.0 / scale_factor)
+    
+    print(f"正在可视化...")
+    print("提示: 按 'Q' 或 'ESC' 键关闭窗口")
     
     # 如果设置了自动关闭时间，启动定时器
     if auto_close_time is not None:
@@ -141,7 +173,6 @@ def visualize_point_cloud(points, title="LAS Point Cloud", point_size=1.0, auto_
         close_thread.start()
     
     try:
-        # 运行可视化
         vis.run()
     except Exception as e:
         print(f"可视化出错: {e}")
@@ -203,6 +234,11 @@ def get_las_info(file_path):
         'version': f"{las.header.version.major}.{las.header.version.minor}"
     }
     
+    # 计算质心（基于边界框中心）
+    info['centroid_x'] = (info['x_min'] + info['x_max']) / 2
+    info['centroid_y'] = (info['y_min'] + info['y_max']) / 2
+    info['centroid_z'] = (info['z_min'] + info['z_max']) / 2
+    
     # 尝试获取点格式信息（兼容不同的 laspy 版本）
     try:
         if hasattr(las.header.point_format, 'id'):
@@ -215,6 +251,37 @@ def get_las_info(file_path):
         info['point_format'] = 'unknown'
     
     return info
+
+
+def calculate_centroid(points):
+    """
+    计算点云的质心。
+    
+    Args:
+        points (numpy.ndarray): 点云数据，形状为 (N, 3)
+        
+    Returns:
+        numpy.ndarray: 质心坐标，形状为 (3,)
+    """
+    return np.mean(points, axis=0)
+
+
+def translate_to_origin(points, centroid=None):
+    """
+    将点云平移，使质心位于坐标原点。
+    
+    Args:
+        points (numpy.ndarray): 点云数据，形状为 (N, 3)
+        centroid (numpy.ndarray): 质心坐标，如果为 None 则自动计算
+        
+    Returns:
+        tuple: (平移后的点云, 质心坐标)
+    """
+    if centroid is None:
+        centroid = calculate_centroid(points)
+    
+    translated_points = points - centroid
+    return translated_points, centroid
 
 
 if __name__ == '__main__':
@@ -247,6 +314,8 @@ if __name__ == '__main__':
             if key == 'point_count':
                 print(f"{key}: {value:,}")
             elif key in ['x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max']:
+                print(f"{key}: {value:.3f}")
+            elif key in ['centroid_x', 'centroid_y', 'centroid_z']:
                 print(f"{key}: {value:.3f}")
             else:
                 print(f"{key}: {value}")
@@ -293,47 +362,83 @@ if __name__ == '__main__':
         print(f"输入无效，使用默认值: {recommended}")
         subsample_factor = recommended
     
-    # 3. 询问用户缩放参数
+    # 3. 读取点云
     print("\n" + "="*60)
-    print("第三步：选择缩放参数")
-    print("="*60)
-    print("缩放参数控制可视化时的初始视角缩放:")
-    print("建议值:")
-    print("  - 紧密视图: 0.5-1.0")
-    print("  - 适中视图: 1.0-2.0")
-    print("  - 全局视图: 2.0-5.0")
-    print("  - 自动缩放: 0 (自动计算)")
-    
-    recommended_scale = 1.0
-    
-    print(f"\n推荐缩放参数: {recommended_scale}")
-    
-    # 获取用户输入
-    try:
-        user_input = input(f"请输入缩放参数 [默认: {recommended_scale}]: ").strip()
-        if user_input:
-            scale_factor = float(user_input)
-        else:
-            scale_factor = recommended_scale
-    except KeyboardInterrupt:
-        print("\n用户取消操作")
-        sys.exit(0)
-    except:
-        print(f"输入无效，使用默认值: {recommended_scale}")
-        scale_factor = recommended_scale
-    
-    # 3. 读取和可视化
-    print("\n" + "="*60)
-    print("第四步：读取和可视化点云")
+    print("第三步：读取点云")
     print("="*60)
     print(f"采样比例: {subsample_factor}")
-    print(f"缩放参数: {scale_factor}")
     
     try:
-        # 读取并可视化
-        points = read_and_visualize_las(
+        # 读取点云
+        points = read_las_point_cloud(
             las_file_path, 
             subsample_factor=subsample_factor,
+            show_progress=True
+        )
+        
+        # 4. 计算质心并询问是否平移
+        print("\n" + "="*60)
+        print("第四步：质心计算与平移")
+        print("="*60)
+        
+        centroid = calculate_centroid(points)
+        print(f"点云质心坐标:")
+        print(f"  X: {centroid[0]:.3f}")
+        print(f"  Y: {centroid[1]:.3f}")
+        print(f"  Z: {centroid[2]:.3f}")
+        
+        # 询问是否平移
+        translate = input("\n是否将质心平移到坐标原点？(y/n) [默认: n]: ").strip().lower()
+        
+        if translate == 'y' or translate == 'yes':
+            points, original_centroid = translate_to_origin(points, centroid)
+            print(f"\n已将点云平移，质心从 ({original_centroid[0]:.3f}, {original_centroid[1]:.3f}, {original_centroid[2]:.3f}) 移至原点 (0, 0, 0)")
+            print(f"平移后点云范围:")
+            print(f"  X: [{points[:, 0].min():.3f}, {points[:, 0].max():.3f}]")
+            print(f"  Y: [{points[:, 1].min():.3f}, {points[:, 1].max():.3f}]")
+            print(f"  Z: [{points[:, 2].min():.3f}, {points[:, 2].max():.3f}]")
+        else:
+            print("\n保持原始坐标不变")
+        
+        # 5. 询问用户缩放参数
+        print("\n" + "="*60)
+        print("第五步：选择缩放参数")
+        print("="*60)
+        print("缩放参数控制可视化时的初始视角缩放:")
+        print("建议值:")
+        print("  - 紧密视图: 0.5-1.0")
+        print("  - 适中视图: 1.0-2.0")
+        print("  - 全局视图: 2.0-5.0")
+        print("  - 自动缩放: 0 (自动计算)")
+        
+        recommended_scale = 1.0
+        
+        print(f"\n推荐缩放参数: {recommended_scale}")
+        
+        # 获取用户输入
+        try:
+            user_input = input(f"请输入缩放参数 [默认: {recommended_scale}]: ").strip()
+            if user_input:
+                scale_factor = float(user_input)
+            else:
+                scale_factor = recommended_scale
+        except KeyboardInterrupt:
+            print("\n用户取消操作")
+            sys.exit(0)
+        except:
+            print(f"输入无效，使用默认值: {recommended_scale}")
+            scale_factor = recommended_scale
+        
+        # 6. 可视化
+        print("\n" + "="*60)
+        print("第六步：可视化点云")
+        print("="*60)
+        print(f"缩放参数: {scale_factor}")
+        
+        # 可视化
+        visualize_point_cloud(
+            points, 
+            title=f"LAS Point Cloud: {las_file_path}", 
             point_size=1.0,
             scale_factor=scale_factor
         )

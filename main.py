@@ -1,180 +1,41 @@
 import open3d as o3d
 import numpy as np
 from copy import deepcopy
-from read_cloudpoints import read_las_point_cloud, get_las_info
+import os
+import sys
+
+from read_cloudpoints import read_las_point_cloud, get_las_info, calculate_centroid, translate_to_origin, visualize_point_cloud
 
 
-def extract_surface_from_las(las_file_path, subsample_factor=10, 
-                            normal_radius=0.5, normal_max_nn=30,
-                            poisson_depth=8, density_quantile=0.1,
-                            show_progress=True, scale_factor=1.0):
-    """
-    从 .las 文件读取点云并提取表面。
-    
-    Args:
-        las_file_path (str): .las 文件路径
-        subsample_factor (int): 下采样因子，用于控制点云数量
-        normal_radius (float): 法线估计的搜索半径
-        normal_max_nn (int): 法线估计的最大邻域点数
-        poisson_depth (int): Poisson 重建的深度参数（越大越精细但计算量越大）
-        density_quantile (float): 密度阈值分位数（移除低密度顶点）
-        show_progress (bool): 是否显示进度
-        scale_factor (float): 缩放参数，0 表示自动计算，1.0 表示默认缩放
-        
-    Returns:
-        tuple: (原始点云, 重建的网格)
-    """
-    
-    # 存储缩放参数以便后续使用
-    global current_scale_factor
-    current_scale_factor = scale_factor
-    
-    # 1. 读取点云
-    print("="*60)
-    print("第一步：读取点云")
-    print("="*60)
-    
-    # 先获取文件信息
-    info = get_las_info(las_file_path)
-    print(f"文件信息:")
-    print(f"  点数: {info['point_count']:,}")
-    print(f"  X 范围: [{info['x_min']:.3f}, {info['x_max']:.3f}]")
-    print(f"  Y 范围: [{info['y_min']:.3f}, {info['y_max']:.3f}]")
-    print(f"  Z 范围: [{info['z_min']:.3f}, {info['z_max']:.3f}]")
-    
-    # 根据点数自动调整下采样比例
-    estimated_points = info['point_count']
-    if subsample_factor is None:
-        if estimated_points > 100_000_000:
-            subsample_factor = 100
-        elif estimated_points > 50_000_000:
-            subsample_factor = 50
-        elif estimated_points > 10_000_000:
-            subsample_factor = 20
-        elif estimated_points > 1_000_000:
-            subsample_factor = 10
-        else:
-            subsample_factor = 5
-    
-    print(f"\n使用下采样比例: {subsample_factor}")
-    print(f"预计读取点数: ~{estimated_points // subsample_factor:,}")
-    
-    # 读取点云
-    point_cloud_np = read_las_point_cloud(
-        las_file_path, 
-        subsample_factor=subsample_factor,
-        show_progress=show_progress
-    )
-    
-    # 2. 转换为 Open3D 点云格式
-    print("\n" + "="*60)
-    print("第二步：转换点云格式")
-    print("="*60)
-    
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(point_cloud_np)
-    print(f"点云对象创建成功，点数: {len(pcd.points):,}")
-    
-    # 预处理：移除重复点和离群点
-    print("\n预处理点云...")
-    
-    # 移除重复点
-    original_points = len(pcd.points)
-    pcd = pcd.remove_duplicated_points()
-    removed_duplicates = original_points - len(pcd.points)
-    if removed_duplicates > 0:
-        print(f"移除重复点: {removed_duplicates:,} 个")
-    
-    # 移除统计离群点
-    pcd_clean, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-    removed_outliers = len(pcd.points) - len(pcd_clean.points)
-    if removed_outliers > 0:
-        print(f"移除离群点: {removed_outliers:,} 个")
-    
-    pcd = pcd_clean
-    pcd.paint_uniform_color([0.5, 0.5, 0.5])
-    print(f"预处理完成，最终点数: {len(pcd.points):,}")
-    
-    # 3. 估计法线
-    print("\n" + "="*60)
-    print("第三步：估计法线")
-    print("="*60)
-    print(f"搜索半径: {normal_radius}")
-    print(f"最大邻域点数: {normal_max_nn}")
-    
-    pcd_normals = deepcopy(pcd)
-    
-    # 先尝试估计法线
-    try:
-        pcd_normals.estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(normal_radius, normal_max_nn)
-        )
-        
-        # 尝试一致性法线方向（可能失败）
-        try:
-            pcd_normals.orient_normals_consistent_tangent_plane(30)
-            print("法线估计完成")
-        except RuntimeError as e:
-            if "qhull" in str(e).lower() or "topology error" in str(e).lower():
-                print("警告: 一致性法线方向调整失败（点云可能存在重复点）")
-                print("使用替代方法：基于视点方向")
-                # 使用基于视点的方向调整
-                pcd_normals.orient_normals_towards_camera_location(
-                    camera_location=pcd_normals.get_center() + np.array([0, 0, 100])
-                )
-                print("法线估计完成（使用替代方法）")
-            else:
-                raise
-    except Exception as e:
-        print(f"法线估计出错: {e}")
-        raise
-    
-    # 4. Poisson 表面重建
-    print("\n" + "="*60)
-    print("第四步：Poisson 表面重建")
-    print("="*60)
-    print(f"重建深度: {poisson_depth}")
-    print("正在重建网格（这可能需要一些时间）...")
-    
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-        pcd_normals, 
-        depth=poisson_depth
-    )
-    
-    print(f"重建完成!")
-    print(f"  顶点数: {len(mesh.vertices):,}")
-    print(f"  三角面数: {len(mesh.triangles):,}")
-    
-    # 5. 移除低密度顶点
-    print("\n" + "="*60)
-    print("第五步：移除低密度顶点")
-    print("="*60)
-    print(f"密度阈值分位数: {density_quantile}")
-    
-    vertices_to_remove = densities < np.quantile(densities, density_quantile)
-    mesh.remove_vertices_by_mask(vertices_to_remove)
-    print(f"移除顶点数: {np.sum(vertices_to_remove):,}")
-    print(f"剩余顶点数: {len(mesh.vertices):,}")
-    
-    mesh.paint_uniform_color([1, 0.7, 0])
-    
-    return pcd, mesh
+# ============================================================
+# 参数配置区域 - 手动修改以下参数以适应不同的点云
+# ============================================================
+
+# 离群点移除参数
+OUTLIER_NB_NEIGHBORS = 20      # 邻域点数，值越大越严格 (推荐: 10-50)
+OUTLIER_STD_RATIO = 5        # 标准差比率，值越小越严格 (推荐: 1.0-3.0)
+
+# 法线估计参数
+NORMAL_RADIUS = 0.005            # 搜索半径，高密度点云用小值 (推荐: 0.01-0.5)
+NORMAL_MAX_NN = 10             # 最大邻域点数 (推荐: 20-50)
+
+# Poisson 表面重建参数
+POISSON_DEPTH = 12             # 八叉树深度，值越大网格越精细但计算量越大 (推荐: 6-12)
+
+# 密度过滤参数
+DENSITY_QUANTILE = 0.005       # 密度阈值分位数，值越小保留越多顶点 (推荐: 0.001-0.1)
+
+# ============================================================
 
 
 if __name__ == '__main__':
-    # 默认文件路径
     default_las_file = r"D:\1-学术\预拼装\结构模型\泉州项目点云及模型\扫描点云数据\44-unset.las"
     
-    import os
-    import sys
-    
-    # 检查命令行参数
     if len(sys.argv) > 1:
         las_file_path = sys.argv[1]
     else:
         las_file_path = default_las_file
     
-    # 检查文件是否存在
     if not os.path.exists(las_file_path):
         print(f"错误: 文件不存在 - {las_file_path}")
         sys.exit(1)
@@ -182,87 +43,174 @@ if __name__ == '__main__':
     print(f"处理文件: {las_file_path}")
     print()
     
-    # 设置参数（可根据文件大小调整）
-    # 对于大文件，建议：
-    # - subsample_factor: 10-100（控制点云数量）
-    # - poisson_depth: 6-10（控制网格精细度，越大越慢）
-    # - normal_radius: 根据点云密度调整
-    # - scale_factor: 0.5-5.0（控制可视化缩放）
-    
-    # 询问用户缩放参数
-    print("\n" + "="*60)
-    print("选择缩放参数")
-    print("="*60)
-    print("缩放参数控制可视化时的初始视角缩放:")
-    print("建议值:")
-    print("  - 紧密视图: 0.5-1.0")
-    print("  - 适中视图: 1.0-2.0")
-    print("  - 全局视图: 2.0-5.0")
-    print("  - 自动缩放: 0 (自动计算)")
-    
-    recommended_scale = 1.0
-    
-    print(f"\n推荐缩放参数: {recommended_scale}")
-    
-    # 获取用户输入
     try:
-        user_input = input(f"请输入缩放参数 [默认: {recommended_scale}]: ").strip()
-        if user_input:
-            scale_factor = float(user_input)
+        # 1. 获取文件信息
+        print("="*60)
+        print("第一步：获取文件信息")
+        print("="*60)
+        info = get_las_info(las_file_path)
+        print(f"点数: {info['point_count']:,}")
+        print(f"X 范围: [{info['x_min']:.3f}, {info['x_max']:.3f}]")
+        print(f"Y 范围: [{info['y_min']:.3f}, {info['y_max']:.3f}]")
+        print(f"Z 范围: [{info['z_min']:.3f}, {info['z_max']:.3f}]")
+        
+        # 2. 询问下采样比例
+        print("\n" + "="*60)
+        print("第二步：选择下采样比例")
+        print("="*60)
+        print("建议值: 快速预览(100-200), 中等质量(50-100), 高质量(10-50)")
+        
+        estimated_points = info['point_count']
+        if estimated_points > 50_000_000:
+            recommended = 100
+        elif estimated_points > 10_000_000:
+            recommended = 50
+        elif estimated_points > 1_000_000:
+            recommended = 20
         else:
-            scale_factor = recommended_scale
-    except KeyboardInterrupt:
-        print("\n用户取消操作")
-        sys.exit(0)
-    except:
-        print(f"输入无效，使用默认值: {recommended_scale}")
-        scale_factor = recommended_scale
-    
-    try:
-        # 执行表面提取
-        pcd, mesh = extract_surface_from_las(
-            las_file_path=las_file_path,
-            subsample_factor=5,          # 下采样比例（增大以减少点数）
-            normal_radius=0.1,            # 法线估计半径（增大以适应稀疏点云）
-            normal_max_nn=30,             # 法线估计最大邻域点数（增大）
-            poisson_depth=10,              # Poisson 重建深度（降低以减少计算量）
-            density_quantile=0.005,        # 密度阈值（降低以保留更多顶点）
-            show_progress=True,
-            scale_factor=scale_factor     # 缩放参数
+            recommended = 10
+        
+        user_input = input(f"请输入采样比例 [默认: {recommended}]: ").strip()
+        subsample_factor = int(user_input) if user_input else recommended
+        
+        # 3. 读取点云
+        print("\n" + "="*60)
+        print("第三步：读取点云")
+        print("="*60)
+        point_cloud_np = read_las_point_cloud(
+            las_file_path, 
+            subsample_factor=subsample_factor,
+            show_progress=True
         )
         
-        # 可视化1：展示原始点云
+        # 4. 质心计算与平移
         print("\n" + "="*60)
-        print("可视化：原始点云")
+        print("第四步：质心计算与平移")
         print("="*60)
-        print("提示: 按 'Q' 或 'ESC' 键关闭窗口")
-        print("关闭此窗口后将展示表面重建结果...")
+        centroid = calculate_centroid(point_cloud_np)
+        print(f"点云质心坐标: ({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f})")
         
-        o3d.visualization.draw_geometries(
-            [pcd],
-            window_name="Original Point Cloud",
-            point_show_normal=False,
+        translate = input("是否将质心平移到坐标原点？(y/n) [默认: n]: ").strip().lower()
+        if translate == 'y' or translate == 'yes':
+            point_cloud_np, original_centroid = translate_to_origin(point_cloud_np, centroid)
+            print(f"已将点云平移，质心移至原点 (0, 0, 0)")
+            print(f"平移后范围: X[{point_cloud_np[:, 0].min():.1f}, {point_cloud_np[:, 0].max():.1f}], "
+                  f"Y[{point_cloud_np[:, 1].min():.1f}, {point_cloud_np[:, 1].max():.1f}], "
+                  f"Z[{point_cloud_np[:, 2].min():.1f}, {point_cloud_np[:, 2].max():.1f}]")
+        else:
+            print("保持原始坐标不变")
+        
+        # 5. 转换为 Open3D 点云并预处理
+        print("\n" + "="*60)
+        print("第五步：预处理点云")
+        print("="*60)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(point_cloud_np)
+        print(f"原始点数: {len(pcd.points):,}")
+        
+        pcd = pcd.remove_duplicated_points()
+        pcd_clean, _ = pcd.remove_statistical_outlier(
+            nb_neighbors=OUTLIER_NB_NEIGHBORS, 
+            std_ratio=OUTLIER_STD_RATIO
+        )
+        pcd = pcd_clean
+        print(f"预处理后点数: {len(pcd.points):,}")
+        
+        # 6. 估计法线
+        print("\n" + "="*60)
+        print("第六步：估计法线")
+        print("="*60)
+        print(f"参数: radius={NORMAL_RADIUS}, max_nn={NORMAL_MAX_NN}")
+        pcd_normals = deepcopy(pcd)
+        pcd_normals.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(NORMAL_RADIUS, NORMAL_MAX_NN)
+        )
+        try:
+            pcd_normals.orient_normals_consistent_tangent_plane(30)
+            print("法线估计完成")
+        except RuntimeError:
+            print("使用替代方法调整法线方向")
+            pcd_normals.orient_normals_towards_camera_location(
+                camera_location=pcd_normals.get_center() + np.array([0, 0, 100])
+            )
+        
+        # 7. Poisson 表面重建
+        print("\n" + "="*60)
+        print("第七步：Poisson 表面重建")
+        print("="*60)
+        print(f"参数: depth={POISSON_DEPTH}")
+        print("正在重建网格...")
+        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+            pcd_normals, depth=POISSON_DEPTH
+        )
+        print(f"重建完成: 顶点数 {len(mesh.vertices):,}, 三角面数 {len(mesh.triangles):,}")
+        
+        # 移除低密度顶点
+        print(f"参数: density_quantile={DENSITY_QUANTILE}")
+        vertices_to_remove = densities < np.quantile(densities, DENSITY_QUANTILE)
+        mesh.remove_vertices_by_mask(vertices_to_remove)
+        print(f"移除低密度顶点后: 剩余顶点数 {len(mesh.vertices):,}")
+        mesh.paint_uniform_color([1, 0.7, 0])
+        
+        # 8. 可视化原始点云
+        print("\n" + "="*60)
+        print("第八步：可视化原始点云")
+        print("="*60)
+        visualize_point_cloud(
+            pcd=pcd,
+            title="Original Point Cloud",
             width=1200,
             height=800
         )
         
-        # 可视化2：展示原始点云和重建的网格
+        # 9. 可视化表面重建结果
         print("\n" + "="*60)
-        print("可视化：表面重建结果")
+        print("第九步：可视化表面重建结果")
         print("="*60)
-        print("灰色：原始点云")
-        print("橙色：重建的表面网格")
-        print("提示: 按 'Q' 或 'ESC' 键关闭窗口")
-        
-        o3d.visualization.draw_geometries(
-            [pcd, mesh],
-            window_name="Surface Reconstruction",
-            point_show_normal=False,
+        print("灰色：原始点云，橙色：重建的表面网格")
+        visualize_point_cloud(
+            geometries=[pcd, mesh],
+            title="Surface Reconstruction",
             width=1200,
-            height=800,
-            mesh_show_wireframe=True,
-            mesh_show_back_face=True
+            height=800
         )
+        
+        # 10. 保存网格模型
+        print("\n" + "="*60)
+        print("第十步：保存网格模型")
+        print("="*60)
+        save_mesh = input("是否保存重建的网格模型？(y/n) [默认: n]: ").strip().lower()
+        
+        if save_mesh == 'y' or save_mesh == 'yes':
+            default_save_path = las_file_path.replace('.las', '_mesh.ply')
+            save_path = input(f"请输入保存路径 [默认: {default_save_path}]: ").strip()
+            if not save_path:
+                save_path = default_save_path
+            
+            print("\n支持的文件格式:")
+            print("  1. PLY (.ply) - 推荐格式")
+            print("  2. OBJ (.obj) - 通用3D模型格式")
+            print("  3. STL (.stl) - 3D打印格式")
+            
+            format_choice = input("请选择格式 (1/2/3) [默认: 1]: ").strip()
+            
+            if format_choice == '2':
+                save_path = save_path.rsplit('.', 1)[0] + '.obj'
+            elif format_choice == '3':
+                save_path = save_path.rsplit('.', 1)[0] + '.stl'
+            else:
+                save_path = save_path.rsplit('.', 1)[0] + '.ply'
+            
+            save_dir = os.path.dirname(save_path)
+            if save_dir and not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            
+            success = o3d.io.write_triangle_mesh(save_path, mesh)
+            if success:
+                print(f"\n网格模型已保存到: {save_path}")
+                print(f"顶点数: {len(mesh.vertices):,}, 三角面数: {len(mesh.triangles):,}")
+            else:
+                print("\n警告: 网格模型保存失败")
         
         print("\n" + "="*60)
         print("处理完成!")
