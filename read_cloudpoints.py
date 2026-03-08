@@ -286,7 +286,7 @@ def translate_to_origin(points, centroid=None):
 
 if __name__ == '__main__':
     # 默认使用用户指定的文件
-    default_file_path = r"D:\1-学术\预拼装\结构模型\泉州项目点云及模型\扫描点云数据\44-unset.las"
+    default_file_path = r"D:\1-学术\预拼装\结构模型\泉州项目点云及模型\扫描点云数据\44-unset-部分去噪.las"
     
     import sys
     
