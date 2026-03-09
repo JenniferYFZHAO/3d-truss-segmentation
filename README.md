@@ -19,9 +19,7 @@
 ├── visualization.py     # 点云可视化模块
 ├── surface_extract.py   # 表面重建模块
 ├── read_cloudpoints.py  # .las 文件读取和可视化模块
-├── visualization.py     # 可视化模块
-├── segmentation.py      # 分割模块（含分割演示主程序）
-├── main.py              # LAS 文件表面提取主程序
+├── register.py          # OBJ 与 LAS 点云配准工具
 ├── setup_env.bat        # Windows 批处理环境配置脚本
 ├── setup_env.ps1        # PowerShell 环境配置脚本
 ├── requirements.txt     # Python 依赖包列表
@@ -74,58 +72,48 @@ pip install -r requirements.txt
 
 ## 使用方法
 
-### 运行主程序
+### 运行 OBJ 与 LAS 点云配准
 
 ```bash
-python main.py
-```
-
-这将执行完整的点云生成、分割、验证和可视化流程。
-
-### 运行 LAS 文件表面提取
-
-```bash
-python main.py
+python register.py
 ```
 
 此脚本会：
-1. 读取指定的 .las 文件（带进度条）
-2. 自动根据文件大小调整下采样比例
-3. 估计点云法线
-4. 执行 Poisson 表面重建
-5. 移除低密度顶点
-6. 可视化原始点云和重建的表面
+1. 读取指定的 OBJ 文件（3D 模型）
+2. 在 OBJ 模型上交互式选取 3 个控制点
+3. 读取指定的 LAS 文件（点云数据）
+4. 自动计算点云质心并询问是否平移到原点
+5. 在 LAS 点云上交互式选取 3 个对应控制点
+6. 计算相似变换（旋转 + 平移 + 缩放）
+7. 应用变换到 LAS 点云
+8. 可视化配准结果（红色 OBJ + 绿色 LAS）
+9. 询问是否保存配准结果和变换参数
 
-**防止计算量过大的机制：**
-- 自动下采样：根据点云数量自动调整采样比例（10-100）
-- 预处理步骤：移除重复点和离群点，避免 Qhull 拓扑错误
-- 可调参数：`subsample_factor` 控制点云数量，`poisson_depth` 控制网格精细度
-- 分批处理：使用 tqdm 进度条显示处理进度
-- 异常处理：支持 Ctrl+C 中断操作，自动回退到替代方法
+**操作流程：**
+1. 运行脚本后，输入 OBJ 文件路径（或按回车使用默认值）
+2. 在 OBJ 可视化窗口中：
+   - 按住 Shift + 左键点击：选取蓝色顶点作为控制点
+   - 按住 Shift + 右键点击：取消选取
+   - 按 Q 键：完成选取并关闭窗口
+   - 请确保选取 3 个控制点
+3. 输入 LAS 文件路径（或按回车使用默认值）
+4. 选择下采样比例（或按回车使用推荐值）
+5. 选择是否将 LAS 点云质心平移到原点
+6. 在 LAS 点云可视化窗口中：
+   - 按住 Shift + 左键点击：选取对应控制点
+   - 按 Q 键：完成选取并关闭窗口
+   - 请按照与 OBJ 模型相同的顺序选取对应点
+7. 查看变换参数和配准结果
+8. 选择是否保存配准结果
 
-**命令行参数：**
-```bash
-# 使用默认文件
-python main.py
+**默认文件路径：**
+- OBJ: `D:\1-学术\预拼装\结构模型\泉州项目点云及模型\Final\44品_centered.obj`
+- LAS: `D:\1-学术\预拼装\结构模型\泉州项目点云及模型\Final\44-unset-部分去噪.las`
 
-# 指定其他文件
-python main.py your_file.las
-```
-
-**在代码中使用：**
-```python
-from main import extract_surface_from_las
-
-pcd, mesh = extract_surface_from_las(
-    las_file_path="your_file.las",
-    subsample_factor=20,          # 下采样比例
-    normal_radius=0.5,            # 法线估计半径
-    normal_max_nn=30,             # 法线估计最大邻域点数
-    poisson_depth=8,              # Poisson 重建深度（6-10）
-    density_quantile=0.1,         # 密度阈值
-    show_progress=True
-)
-```
+**配准结果：**
+- 变换参数文件：`*_registered_transform.txt`
+- 网格文件：`*_registered_mesh.obj`
+- 点云文件：`*_registered_pointcloud.ply`
 
 ### 运行表面重建
 
