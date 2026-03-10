@@ -382,7 +382,7 @@ def main():
     3. 计算变换矩阵并应用
     4. 可视化配准结果
     """
-    default_obj_file = r"D:\1-学术\预拼装\结构模型\泉州项目点云及模型\Final\44品_centered.obj"
+    default_obj_file = r"D:\1-学术\预拼装\结构模型\泉州项目点云及模型\Final\44品-separated.obj"
     default_las_file = r"D:\1-学术\预拼装\结构模型\泉州项目点云及模型\Final\44-unset-部分去噪.las"
     
     print("="*60)
@@ -401,11 +401,32 @@ def main():
         
         mesh, vertices = load_obj_file(obj_file_path)
         
-        print(f"\nOBJ 模型信息:")
+        print(f"\nOBJ 模型原始信息:")
         print(f"  顶点范围:")
         print(f"    X: [{vertices[:, 0].min():.3f}, {vertices[:, 0].max():.3f}]")
         print(f"    Y: [{vertices[:, 1].min():.3f}, {vertices[:, 1].max():.3f}]")
         print(f"    Z: [{vertices[:, 2].min():.3f}, {vertices[:, 2].max():.3f}]")
+        
+        # 计算质心并询问是否平移
+        obj_centroid = np.mean(vertices, axis=0)
+        print(f"\nOBJ 模型质心坐标: ({obj_centroid[0]:.3f}, {obj_centroid[1]:.3f}, {obj_centroid[2]:.3f})")
+        
+        translate_obj = input("是否将 OBJ 模型质心平移到坐标原点？(y/n) [默认: y]: ").strip().lower()
+        obj_translation_matrix = np.eye(4)
+        if translate_obj != 'n':
+            # 平移网格顶点
+            vertices_centered = vertices - obj_centroid
+            mesh.vertices = o3d.utility.Vector3dVector(vertices_centered)
+            vertices = vertices_centered
+            # 记录平移矩阵
+            obj_translation_matrix[:3, 3] = -obj_centroid
+            print(f"已将 OBJ 模型平移至原点")
+            print(f"  平移后范围:")
+            print(f"    X: [{vertices[:, 0].min():.3f}, {vertices[:, 0].max():.3f}]")
+            print(f"    Y: [{vertices[:, 1].min():.3f}, {vertices[:, 1].max():.3f}]")
+            print(f"    Z: [{vertices[:, 2].min():.3f}, {vertices[:, 2].max():.3f}]")
+        else:
+            print("保持 OBJ 模型原始坐标不变")
         
         # ========== 第二步：在 OBJ 上选取控制点 ==========
         print("\n" + "="*60)
@@ -459,9 +480,12 @@ def main():
         las_centroid = np.mean(las_points, axis=0)
         print(f"\n点云质心坐标: ({las_centroid[0]:.3f}, {las_centroid[1]:.3f}, {las_centroid[2]:.3f})")
         
+        las_translation_matrix = np.eye(4)
         translate_las = input("是否将 LAS 点云质心平移到坐标原点？(y/n) [默认: y]: ").strip().lower()
         if translate_las != 'n':
             las_points = las_points - las_centroid
+            # 记录平移矩阵
+            las_translation_matrix[:3, 3] = -las_centroid
             print(f"已将 LAS 点云平移至原点")
             print(f"  平移后范围:")
             print(f"    X: [{las_points[:, 0].min():.3f}, {las_points[:, 0].max():.3f}]")
@@ -537,17 +561,53 @@ def main():
         if save == 'y' or save == 'yes':
             output_dir = os.path.dirname(obj_file_path)
             base_name = os.path.splitext(os.path.basename(obj_file_path))[0] + "_registered"
+            
+            # 保存每步变换后的模型
+            print("\n保存中间步骤模型...")
+            
+            # 1. 保存 OBJ 平移后的模型
+            if translate_obj != 'n':
+                obj_centered_path = os.path.join(output_dir, f"{base_name}_obj_centered.obj")
+                o3d.io.write_triangle_mesh(obj_centered_path, mesh)
+                print(f"OBJ 平移后模型已保存: {obj_centered_path}")
+            
+            # 2. 保存 LAS 平移后的点云
+            if translate_las != 'n':
+                las_centered_pcd = o3d.geometry.PointCloud()
+                las_centered_pcd.points = o3d.utility.Vector3dVector(las_points)
+                las_centered_path = os.path.join(output_dir, f"{base_name}_las_centered.ply")
+                o3d.io.write_point_cloud(las_centered_path, las_centered_pcd)
+                print(f"LAS 平移后点云已保存: {las_centered_path}")
+            
+            # 3. 保存最终配准结果
             save_transformed_data(mesh, transformed_las_points, output_dir, base_name)
             
+            # 4. 保存所有变换矩阵
             transform_path = os.path.join(output_dir, f"{base_name}_transform.txt")
             with open(transform_path, 'w') as f:
-                f.write("Similarity Transform Parameters\n")
-                f.write("="*40 + "\n\n")
-                f.write(f"Scale: {transform['s']:.10f}\n\n")
-                f.write(f"Translation:\n{transform['t']}\n\n")
-                f.write(f"Rotation Matrix:\n{transform['R']}\n\n")
-                f.write(f"4x4 Transform Matrix:\n{transform['transform_matrix']}\n")
-            print(f"变换参数已保存: {transform_path}")
+                f.write("Registration Transformation Parameters\n")
+                f.write("="*60 + "\n\n")
+                
+                f.write("1. OBJ Model Translation (to origin):\n")
+                f.write(f"   Centroid: {obj_centroid}\n")
+                f.write(f"   Translation Matrix:\n{obj_translation_matrix}\n\n")
+                
+                f.write("2. LAS Point Cloud Translation (to origin):\n")
+                f.write(f"   Centroid: {las_centroid}\n")
+                f.write(f"   Translation Matrix:\n{las_translation_matrix}\n\n")
+                
+                f.write("3. Similarity Transform (LAS to OBJ):\n")
+                f.write(f"   Scale: {transform['s']:.10f}\n")
+                f.write(f"   Translation:\n{transform['t']}\n")
+                f.write(f"   Rotation Matrix:\n{transform['R']}\n")
+                f.write(f"   4x4 Transform Matrix:\n{transform['transform_matrix']}\n\n")
+                
+                f.write("4. Combined Transform (LAS original -> OBJ space):\n")
+                # 计算组合变换：LAS原始坐标 -> LAS中心 -> 配准变换 -> OBJ坐标
+                combined_transform = transform['transform_matrix'] @ las_translation_matrix
+                f.write(f"   Combined Matrix:\n{combined_transform}\n")
+            
+            print(f"\n所有变换参数已保存: {transform_path}")
         
         print("\n" + "="*60)
         print("配准完成!")
