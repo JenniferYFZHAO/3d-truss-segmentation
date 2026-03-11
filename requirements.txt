@@ -1,6 +1,21 @@
-numpy>=2.0.0
-matplotlib>=3.0.0
-scipy>=1.0.0
-open3d>=0.17.0
-laspy>=2.0.0
-tqdm>=4.0.0
+# 3D 桁架结构点云分割与配准工具 - 依赖包列表
+# 
+# 安装方法：
+#   pip install -r requirements.txt
+#
+# 环境要求：
+#   Python 3.8 或更高版本
+#   推荐使用虚拟环境
+
+# 核心依赖包
+numpy>=2.0.0              # 数值计算和数组操作
+matplotlib>=3.0.0          # 数据可视化
+scipy>=1.0.0              # 科学计算和优化算法
+open3d>=0.17.0            # 3D 点云处理和可视化
+laspy>=2.0.0              # LAS/LAZ 点云文件读写
+tqdm>=4.0.0               # 进度条显示
+
+# 可选依赖包
+# opencv-python>=4.0.0     # 图像处理（如需要）
+# pandas>=1.0.0            # 数据处理（如需要）
+# scikit-learn>=0.24.0     # 机器学习算法（如需要）
