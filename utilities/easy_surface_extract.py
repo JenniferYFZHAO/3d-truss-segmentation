@@ -1,7 +1,7 @@
 import open3d as o3d
 import numpy as np
 from copy import deepcopy
-from generation import generate_truss_point_cloud
+from utilities.generation import generate_truss_point_cloud
 
 if __name__ == '__main__':
     # 1. 定义桁架节点和构件

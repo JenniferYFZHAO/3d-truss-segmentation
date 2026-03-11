@@ -4,7 +4,7 @@ from copy import deepcopy
 import os
 import sys
 
-from read_cloudpoints import read_las_point_cloud, get_las_info, calculate_centroid, translate_to_origin, visualize_point_cloud
+from utilities.read_cloudpoints import read_las_point_cloud, get_las_info, calculate_centroid, translate_to_origin, visualize_point_cloud
 
 
 # ============================================================
