@@ -1604,6 +1604,472 @@ def visualize_interface_misalignment(analysis_results):
     )
 
 
+def visualize_assembly_nodes(reconstructed_nodes, assembly_nodes, title="Assembly Nodes Visualization"):
+    """
+    可视化重构节点和拼装面节点的位置。
+    
+    Args:
+        reconstructed_nodes: 重构节点列表
+        assembly_nodes: 拼装面节点列表
+        title: 可视化标题
+    """
+    print(f"\n可视化: {title}")
+    
+    geometries = []
+    
+    # 显示重构节点（红色）
+    for node in reconstructed_nodes:
+        center = node['coords']
+        radius = node['radius'] * 0.3  # 缩小显示比例
+        
+        sphere = o3d.geometry.TriangleMesh.create_sphere(
+            radius=radius,
+            resolution=20
+        )
+        sphere.translate(center)
+        sphere.paint_uniform_color([1.0, 0.0, 0.0])
+        sphere.compute_vertex_normals()
+        geometries.append(sphere)
+    
+    # 显示拼装面节点（蓝色）
+    for node in assembly_nodes:
+        center = node['coords']
+        radius = node['radius'] * 0.3  # 缩小显示比例
+        
+        sphere = o3d.geometry.TriangleMesh.create_sphere(
+            radius=radius,
+            resolution=20
+        )
+        sphere.translate(center)
+        sphere.paint_uniform_color([0.0, 0.0, 1.0])
+        sphere.compute_vertex_normals()
+        geometries.append(sphere)
+    
+    # 显示坐标轴
+    coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+    geometries.append(coordinate_frame)
+    
+    # 可视化
+    o3d.visualization.draw_geometries(
+        geometries,
+        window_name=title,
+        width=1400,
+        height=900
+    )
+
+
+# ==================== 逐步拼装累积误差分析 ====================
+
+def analyze_cumulative_assembly_errors(
+    sphere_results, 
+    assembly_configs, 
+    obj_centroid, 
+    coarse_transform, 
+    icp_result,
+    tolerance=0.5
+):
+    """
+    逐步拼装的累积误差分析。
+    
+    Args:
+        sphere_results: 球节点分析结果
+        assembly_configs: 拼装配置列表，每个配置包含：
+            - name: 拼装面名称（如"45品"、"49品"）
+            - nodes_file: 节点CSV文件路径
+        obj_centroid: OBJ模型质心
+        coarse_transform: 粗配准变换
+        icp_result: ICP精配准结果
+        tolerance: 匹配容差
+        
+    Returns:
+        dict: 累积误差分析结果
+    """
+    print("\n" + "="*60)
+    print("逐步拼装累积误差分析")
+    print("="*60)
+    
+    # 准备重构节点
+    reconstructed_nodes = []
+    for result in sphere_results:
+        if result['status'] == 'success':
+            reconstructed_nodes.append({
+                'id': f"node_{result['index']}",
+                'coords': result['cloud_center'],
+                'radius': result['cloud_radius']
+            })
+    
+    print(f"已准备 {len(reconstructed_nodes)} 个重构节点")
+    
+    # 初始化累积变换
+    cumulative_transform = np.eye(4)
+    current_points = np.array([n['coords'] for n in reconstructed_nodes])
+    
+    # 存储每次拼装的分析结果
+    assembly_reports = []
+    
+    for i, config in enumerate(assembly_configs):
+        print(f"\n{'='*60}")
+        print(f"第 {i+1} 步拼装: {config['name']}")
+        print(f"{'='*60}")
+        
+        # 读取拼装面的结构信息
+        print(f"读取 {config['name']} 结构信息...")
+        try:
+            assembly_nodes = read_surrounding_nodes(config['nodes_file'])
+            
+            if not assembly_nodes:
+                print(f"警告: {config['name']} 没有节点信息，跳过")
+                continue
+            
+            print(f"  读取到 {len(assembly_nodes)} 个节点")
+            
+            # 应用变换到拼装面节点
+            print(f"应用变换到 {config['name']} 节点...")
+            transformed_assembly_nodes = []
+            for node in assembly_nodes:
+                center = np.array([node['x'], node['y'], node['z']])
+                # 应用中心化变换
+                center_centered = center - obj_centroid
+                # 应用粗配准变换
+                center_registered = coarse_transform['s'] * (coarse_transform['R'] @ center_centered) + coarse_transform['t']
+                # 应用ICP精配准变换
+                center_final = (icp_result['transform_matrix'][:3, :3] @ center_registered) + icp_result['transform_matrix'][:3, 3]
+                # 应用累积变换
+                center_cumulative = (cumulative_transform[:3, :3] @ center_final) + cumulative_transform[:3, 3]
+                
+                transformed_node = {
+                    'id': node['id'],
+                    'coords': center_cumulative,
+                    'radius': node['radius'] * coarse_transform['s'] * icp_result['s']
+                }
+                transformed_assembly_nodes.append(transformed_node)
+            
+            # 可视化变换后的节点位置
+            visualize_assembly_nodes(
+                reconstructed_nodes,
+                transformed_assembly_nodes,
+                title=f"Step {i+1} - {config['name']} - Transformed Nodes (Before Matching)"
+            )
+            
+            # 使用最近邻算法进行节点配对
+            print(f"使用最近邻算法进行节点配对...")
+            matched_pairs = match_nodes_by_nearest_neighbor(
+                reconstructed_nodes, 
+                transformed_assembly_nodes, 
+                tolerance
+            )
+            
+            if len(matched_pairs) == 0:
+                print(f"警告: {config['name']} 没有找到匹配的节点对")
+                continue
+            
+            # 计算拼装误差
+            errors = [pair['distance'] for pair in matched_pairs]
+            avg_error = np.mean(errors)
+            max_error = np.max(errors)
+            std_error = np.std(errors)
+            
+            print(f"\n{config['name']} 拼装误差分析:")
+            print(f"  匹配节点对数: {len(matched_pairs)}")
+            print(f"  平均误差: {avg_error*1000:.2f} mm")
+            print(f"  最大误差: {max_error*1000:.2f} mm")
+            print(f"  标准差: {std_error*1000:.2f} mm")
+            
+            # 计算最优旋转以最小化误差
+            print(f"\n计算最优旋转以最小化 {config['name']} 拼装误差...")
+            optimal_rotation = compute_optimal_rotation(matched_pairs)
+            
+            # 应用最优旋转到点云
+            print(f"应用最优旋转到点云...")
+            current_points = apply_rotation_to_points(current_points, optimal_rotation)
+            
+            # 更新累积变换
+            cumulative_transform[:3, :3] = optimal_rotation @ cumulative_transform[:3, :3]
+            
+            # 更新重构节点坐标
+            for j, node in enumerate(reconstructed_nodes):
+                node['coords'] = current_points[j]
+            
+            # 可视化旋转后的节点位置
+            visualize_assembly_nodes(
+                reconstructed_nodes,
+                transformed_assembly_nodes,
+                title=f"Step {i+1} - {config['name']} - After Rotation (Before Next Assembly)"
+            )
+            
+            # 生成拼装误差报告
+            report = {
+                'step': i + 1,
+                'name': config['name'],
+                'matched_pairs': matched_pairs,
+                'avg_error': avg_error,
+                'max_error': max_error,
+                'std_error': std_error,
+                'optimal_rotation': optimal_rotation,
+                'cumulative_transform': cumulative_transform.copy()
+            }
+            assembly_reports.append(report)
+            
+            # 保存本次拼装误差报告
+            save_assembly_error_report(report, f"assembly_error_step_{i+1}_{config['name']}.csv")
+            
+        except Exception as e:
+            print(f"处理 {config['name']} 时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # 生成累积误差总结报告
+    print(f"\n{'='*60}")
+    print("累积误差总结")
+    print(f"{'='*60}")
+    
+    if assembly_reports:
+        print(f"\n共完成 {len(assembly_reports)} 步拼装分析:")
+        for report in assembly_reports:
+            print(f"\n第 {report['step']} 步 - {report['name']}:")
+            print(f"  平均误差: {report['avg_error']*1000:.2f} mm")
+            print(f"  最大误差: {report['max_error']*1000:.2f} mm")
+            print(f"  标准差: {report['std_error']*1000:.2f} mm")
+        
+        # 分析误差累积趋势
+        avg_errors = [report['avg_error'] for report in assembly_reports]
+        max_errors = [report['max_error'] for report in assembly_reports]
+        
+        print(f"\n误差累积趋势:")
+        print(f"  平均误差: {avg_errors[0]*1000:.2f} mm -> {avg_errors[-1]*1000:.2f} mm")
+        print(f"  最大误差: {max_errors[0]*1000:.2f} mm -> {max_errors[-1]*1000:.2f} mm")
+        
+        # 保存累积误差总结报告
+        save_cumulative_error_summary(assembly_reports)
+        
+        return {
+            'assembly_reports': assembly_reports,
+            'cumulative_transform': cumulative_transform,
+            'avg_errors': avg_errors,
+            'max_errors': max_errors
+        }
+    else:
+        print("没有完成任何拼装分析")
+        return None
+
+
+def match_nodes_by_nearest_neighbor(reconstructed_nodes, assembly_nodes, tolerance):
+    """
+    使用最近邻算法进行节点配对。
+    
+    Args:
+        reconstructed_nodes: 重构节点列表
+        assembly_nodes: 拼装面节点列表
+        tolerance: 匹配容差
+        
+    Returns:
+        list: 匹配的节点对列表
+    """
+    if not reconstructed_nodes or not assembly_nodes:
+        return []
+    
+    # 提取坐标
+    recon_coords = np.array([n['coords'] for n in reconstructed_nodes])
+    assembly_coords = np.array([n['coords'] for n in assembly_nodes])
+    
+    # 使用KDTree进行最近邻搜索
+    kdtree = KDTree(assembly_coords)
+    distances, indices = kdtree.query(recon_coords, k=1)
+    
+    # 找到匹配对
+    matched_pairs = []
+    used_assembly_indices = set()
+    
+    for i, (dist, idx) in enumerate(zip(distances, indices)):
+        if dist <= tolerance and idx not in used_assembly_indices:
+            matched_pairs.append({
+                'reconstructed_node': reconstructed_nodes[i],
+                'assembly_node': assembly_nodes[idx],
+                'distance': dist
+            })
+            used_assembly_indices.add(idx)
+    
+    return matched_pairs
+
+
+def compute_optimal_rotation(matched_pairs):
+    """
+    计算最优旋转以最小化匹配节点对的距离。
+    
+    Args:
+        matched_pairs: 匹配的节点对列表
+        
+    Returns:
+        np.ndarray: 3x3 旋转矩阵
+    """
+    if len(matched_pairs) < 3:
+        print("警告: 匹配节点对少于3个，无法计算旋转")
+        return np.eye(3)
+    
+    # 提取坐标
+    source_points = np.array([pair['reconstructed_node']['coords'] for pair in matched_pairs])
+    target_points = np.array([pair['assembly_node']['coords'] for pair in matched_pairs])
+    
+    # 计算质心
+    source_centroid = np.mean(source_points, axis=0)
+    target_centroid = np.mean(target_points, axis=0)
+    
+    # 中心化
+    source_centered = source_points - source_centroid
+    target_centered = target_points - target_centroid
+    
+    # 计算协方差矩阵
+    H = source_centered.T @ target_centered
+    
+    # SVD分解
+    U, _, Vt = np.linalg.svd(H)
+    
+    # 计算旋转矩阵
+    R = Vt.T @ U.T
+    
+    # 确保右手坐标系
+    if np.linalg.det(R) < 0:
+        Vt[-1, :] *= -1
+        R = Vt.T @ U.T
+    
+    return R
+
+
+def apply_rotation_to_points(points, rotation_matrix):
+    """
+    应用旋转矩阵到点云。
+    
+    Args:
+        points: 点云坐标 (N, 3)
+        rotation_matrix: 3x3 旋转矩阵
+        
+    Returns:
+        np.ndarray: 旋转后的点云坐标
+    """
+    return (rotation_matrix @ points.T).T
+
+
+def save_assembly_error_report(report, output_file):
+    """
+    保存单次拼装误差报告。
+    
+    Args:
+        report: 拼装误差报告
+        output_file: 输出文件路径
+    """
+    try:
+        with open(output_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                f"第 {report['step']} 步拼装误差报告 - {report['name']}"
+            ])
+            writer.writerow([])
+            writer.writerow([
+                '统计信息',
+                '平均误差(m)',
+                '最大误差(m)',
+                '标准差(m)',
+                '匹配节点对数'
+            ])
+            writer.writerow([
+                '',
+                f"{report['avg_error']:.6f}",
+                f"{report['max_error']:.6f}",
+                f"{report['std_error']:.6f}",
+                len(report['matched_pairs'])
+            ])
+            writer.writerow([])
+            writer.writerow([
+                '匹配节点对详情',
+                '重构节点ID',
+                '拼装节点ID',
+                '误差距离(m)',
+                '重构节点X',
+                '重构节点Y',
+                '重构节点Z',
+                '拼装节点X',
+                '拼装节点Y',
+                '拼装节点Z'
+            ])
+            
+            for pair in report['matched_pairs']:
+                recon_node = pair['reconstructed_node']
+                assembly_node = pair['assembly_node']
+                writer.writerow([
+                    '',
+                    recon_node['id'],
+                    assembly_node['id'],
+                    f"{pair['distance']:.6f}",
+                    f"{recon_node['coords'][0]:.6f}",
+                    f"{recon_node['coords'][1]:.6f}",
+                    f"{recon_node['coords'][2]:.6f}",
+                    f"{assembly_node['coords'][0]:.6f}",
+                    f"{assembly_node['coords'][1]:.6f}",
+                    f"{assembly_node['coords'][2]:.6f}"
+                ])
+        
+        print(f"拼装误差报告已保存: {output_file}")
+    except Exception as e:
+        print(f"保存拼装误差报告时出错: {e}")
+
+
+def save_cumulative_error_summary(assembly_reports):
+    """
+    保存累积误差总结报告。
+    
+    Args:
+        assembly_reports: 拼装报告列表
+    """
+    try:
+        output_file = "cumulative_assembly_error_summary.csv"
+        with open(output_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['逐步拼装累积误差总结'])
+            writer.writerow([])
+            writer.writerow([
+                '步骤',
+                '拼装面名称',
+                '匹配节点对数',
+                '平均误差(m)',
+                '最大误差(m)',
+                '标准差(m)'
+            ])
+            
+            for report in assembly_reports:
+                writer.writerow([
+                    report['step'],
+                    report['name'],
+                    len(report['matched_pairs']),
+                    f"{report['avg_error']:.6f}",
+                    f"{report['max_error']:.6f}",
+                    f"{report['std_error']:.6f}"
+                ])
+            
+            writer.writerow([])
+            writer.writerow(['误差累积趋势'])
+            writer.writerow([
+                '步骤',
+                '累积平均误差(m)',
+                '累积最大误差(m)'
+            ])
+            
+            cumulative_avg = 0
+            cumulative_max = 0
+            for i, report in enumerate(assembly_reports):
+                cumulative_avg += report['avg_error']
+                cumulative_max = max(cumulative_max, report['max_error'])
+                writer.writerow([
+                    report['step'],
+                    f"{cumulative_avg/(i+1):.6f}",
+                    f"{cumulative_max:.6f}"
+                ])
+        
+        print(f"累积误差总结报告已保存: {output_file}")
+    except Exception as e:
+        print(f"保存累积误差总结报告时出错: {e}")
+
+
 # ==================== 切面可视化 ====================
 
 def extract_sphere_cross_section(points, center, radius, normal, thickness=0.02):
@@ -2344,101 +2810,56 @@ def main():
         
 
         
-        # ========== 第十六步：周围结构拼装误差分析 ==========
+        # ========== 第十六步：逐步拼装累积误差分析 ==========
         print("\n" + "="*60)
-        print("第十六步：周围结构拼装误差分析")
+        print("第十六步：逐步拼装累积误差分析")
         print("="*60)
         
-        # 读取周围结构文件
-        print(f"读取周围结构文件: {surrounding_obj}")
+        # 定义拼装配置列表
+        assembly_configs = [
+            {
+                'name': '45品',
+                'nodes_file': 'D:\\1-学术\\预拼装\\结构模型\\泉州项目点云及模型\\Final\\周边-45.csv'
+            },
+            {
+                'name': '2126品',
+                'nodes_file': 'D:\\1-学术\\预拼装\\结构模型\\泉州项目点云及模型\\Final\\周边-2126.csv'
+            },
+            {
+                'name': '43品',
+                'nodes_file': 'D:\\1-学术\\预拼装\\结构模型\\泉州项目点云及模型\\Final\\周边-43.csv'
+            }
+        ]
         
-        try:
-            surrounding_mesh, surrounding_vertices = read_obj_mesh(surrounding_obj)
+        print("\n已配置 3 个拼装面：")
+        for i, config in enumerate(assembly_configs):
+            print(f"  {i+1}. {config['name']}: {config['nodes_file']}")
+        
+        if not assembly_configs:
+            print("未配置任何拼装面，跳过累积误差分析")
+        else:
+            print(f"\n已配置 {len(assembly_configs)} 个拼装面：")
+            for i, config in enumerate(assembly_configs):
+                print(f"  {i+1}. {config['name']}: {config['nodes_file']}")
             
-            # 应用变换到周围结构
-            print("应用变换到周围结构...")
-            # 首先应用 OBJ 中心化变换
-            surrounding_mesh_centered = apply_transform_to_mesh(surrounding_mesh, np.eye(3), -obj_centroid, 1.0)
-            # 然后应用粗配准和 ICP 精配准变换
-            surrounding_mesh_transformed = apply_transform_to_mesh(surrounding_mesh_centered, transform['R'], transform['t'], transform['s'])
-            # 应用 ICP 精配准变换
-            icp_transform = icp_result['transform_matrix']
-            final_surrounding_mesh = surrounding_mesh_transformed.transform(icp_transform)
+            # 执行逐步拼装累积误差分析
+            tolerance_input = input("\n请输入匹配容差（米）[默认: 0.5]: ").strip()
+            tolerance = float(tolerance_input) if tolerance_input else 0.5
             
-            # 读取周边结构节点信息
-            surrounding_nodes = read_surrounding_nodes(surrounding_nodes_path)
+            cumulative_results = analyze_cumulative_assembly_errors(
+                sphere_results=sphere_results,
+                assembly_configs=assembly_configs,
+                obj_centroid=obj_centroid,
+                coarse_transform=transform,
+                icp_result=icp_result,
+                tolerance=tolerance
+            )
             
-            # 应用变换到周边结构节点
-            if surrounding_nodes:
-                print("应用变换到周边结构节点...")
-                # 首先应用 OBJ 中心化变换
-                transformed_surrounding_nodes = []
-                for node in surrounding_nodes:
-                    center = np.array([node['x'], node['y'], node['z']])
-                    # 应用中心化变换
-                    center_centered = center - obj_centroid
-                    # 应用粗配准变换
-                    center_registered = transform['s'] * (transform['R'] @ center_centered) + transform['t']
-                    # 应用 ICP 精配准变换
-                    center_final = (icp_transform[:3, :3] @ center_registered) + icp_transform[:3, 3]
-                    
-                    transformed_node = {
-                        'id': node['id'],
-                        'x': center_final[0],
-                        'y': center_final[1],
-                        'z': center_final[2],
-                        'radius': node['radius'] * transform['s'] * icp_result['s']
-                    }
-                    transformed_surrounding_nodes.append(transformed_node)
-                
-                print(f"已变换 {len(transformed_surrounding_nodes)} 个周边结构节点")
-            
-            # 执行接口错边误差分析
-            identity_matrix = np.eye(4)
-            
-            if surrounding_nodes:
-                analysis_results = analyze_interface_misalignment(
-                    sphere_results, 
-                    transformed_surrounding_nodes, 
-                    identity_matrix, 
-                    tolerance=0.5
-                )
-                
-                # 可视化接口错边误差分析结果
-                visualize_interface_misalignment(analysis_results)
-                
-                # 保存接口错边分析结果
-                output_path = os.path.join(os.getcwd(), "interface_misalignment_analysis.csv")
-                
-                try:
-                    with open(output_path, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
-                        writer.writerow(['接口错边分析结果'])
-                        writer.writerow([
-                            '重构节点ID', '周边节点ID', '错边距离(m)', 
-                            '重构节点X', '重构节点Y', '重构节点Z', 
-                            '周边节点X', '周边节点Y', '周边节点Z'
-                        ])
-                        
-                        for misalignment in analysis_results['interface_misalignments']:
-                            writer.writerow([
-                                misalignment['reconstructed_node_id'],
-                                misalignment['surrounding_node_id'],
-                                f"{misalignment['misalignment_distance']:.6f}",
-                                f"{misalignment['recon_coords'][0]:.6f}",
-                                f"{misalignment['recon_coords'][1]:.6f}",
-                                f"{misalignment['recon_coords'][2]:.6f}",
-                                f"{misalignment['surround_coords'][0]:.6f}",
-                                f"{misalignment['surround_coords'][1]:.6f}",
-                                f"{misalignment['surround_coords'][2]:.6f}"
-                            ])
-                    
-                    print(f"接口错边分析结果已保存到: {output_path}")
-                except Exception as e:
-                    print(f"保存接口错边分析结果时出错: {e}")
-            
-        except Exception as e:
-            print(f"读取或处理周围结构文件时出错: {e}")
+            if cumulative_results:
+                print(f"\n逐步拼装累积误差分析完成！")
+                print(f"  共完成 {len(cumulative_results['assembly_reports'])} 步拼装分析")
+                print(f"  最终累积变换矩阵已更新")
+                print(f"  误差报告已保存到当前目录")
         
         
         print("\n" + "="*60)
